@@ -19,5 +19,6 @@ link /SUBSYSTEM:CONSOLE /LIBPATH:\masm32\lib crud_estudiantes.obj
 ```
 
 ## Data Storage Quirks
-- The app operates on binary data directly (`estudiantes.bin`).
-- Structs (e.g., `ESTUDIANTE`) are strictly mapped to binary files via Win32 API functions (`CreateFile`, `ReadFile`, `WriteFile`). Ensure struct byte alignment is taken into account when modifying schemas.
+- The app operates on binary data directly (`alumnos.dat`).
+- Structs (e.g., `Alumno`) are strictly mapped to binary files via MASM32 macros (`fopen`, `fread`, `fwrite`, `fcreate`, `fdelete`) and Win32 API (`MoveFile`). Ensure struct byte alignment is taken into account when modifying schemas.
+- Deletion operates via a temporary file filter, rather than a logical flag.

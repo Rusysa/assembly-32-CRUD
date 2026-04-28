@@ -1,64 +1,72 @@
-# Guía de Estudio y Explicación del Programa: CRUD de Estudiantes en MASM32
+# Guía de Estudio y Explicación del Programa: CRUD de Alumnos en MASM32
 
-Este documento explica en detalle el funcionamiento del programa escrito en lenguaje ensamblador (MASM32) diseñado para gestionar un registro de estudiantes. Además, sirve como material de estudio para defender el código ante un docente.
+Este documento explica en detalle el funcionamiento del programa escrito en lenguaje ensamblador (MASM32) diseñado para gestionar un registro de alumnos. Además, sirve como material de estudio para defender el código ante un docente.
 
 ---
 
 ## 1. Visión General del Programa
 
-El programa es una aplicación de consola en Win32 Assembly (MASM32) que implementa un sistema **CRUD** (Crear, Leer, Actualizar, Eliminar) para un registro de estudiantes.
+El programa es una aplicación de consola en Win32 Assembly (MASM32) que implementa un sistema **CRUD** (Crear, Leer, Actualizar, Eliminar) básico para un registro de alumnos.
 
-En lugar de utilizar una base de datos relacional, el sistema guarda la información en un **archivo binario directo** (`estudiantes.bin`). Esto permite leer y escribir por bloques de memoria exactos (estructuras) sin necesidad de procesar texto plano.
+En lugar de utilizar una base de datos relacional, el sistema guarda la información en un **archivo de acceso secuencial** (`alumnos.dat`). Esto permite leer y escribir por bloques de memoria exactos (estructuras) sin necesidad de procesar texto plano.
 
 ## 2. Arquitectura de Datos: La Estructura (`STRUCT`)
 
-El corazón del manejo de la información es la estructura `ESTUDIANTE`. Al estar en ensamblador y usar archivos binarios, el tamaño exacto de cada registro en bytes es crítico para calcular los desplazamientos (`offsets`).
+El corazón del manejo de la información es la estructura `Alumno`. Al estar en ensamblador y usar archivos de este tipo, el tamaño exacto de cada registro en bytes es crítico para las operaciones de lectura y escritura.
 
 ```assembly
-ESTUDIANTE STRUCT
-    matricula   DWORD   ?           ; 4 bytes (Número único)
-    nombre      BYTE    32 dup(?)   ; 32 bytes (Cadena de texto)
-    carrera     BYTE    32 dup(?)   ; 32 bytes (Cadena de texto)
-    promedio    DWORD   ?           ; 4 bytes (Promedio * 100)
-    activo      DWORD   ?           ; 4 bytes (1=Activo, 0=Eliminado)
-ESTUDIANTE ENDS
+Alumno STRUCT
+    id           DWORD ?        ; 4 bytes (Identificador único)
+    nombre       db 32 dup(?)   ; 32 bytes (Cadena de texto)
+    apellido     db 32 dup(?)   ; 32 bytes (Cadena de texto)
+    edad         DWORD ?        ; 4 bytes (Edad del alumno)
+    calificacion DWORD ?        ; 4 bytes (Calificación del alumno)
+Alumno ENDS
 ```
-**Tamaño Total por Registro:** `108 bytes`.
-*(NOTA: 4 + 32 + 32 + 4 + 4 = 76 bytes reales declarados, pero con alineación y directivas internas de memoria dependiendo del compilador, el programa lo ajusta y maneja internamente la contabilidad. El código marca "108 bytes", lo cual indica que internamente el programador contó holguras o variables. Sin embargo, para fines de examen, limítate a decir que se calcula automáticamente con `SIZEOF ESTUDIANTE`).*
+**Tamaño Total por Registro:** `76 bytes`.
+*(Se calcula sumando: 4 + 32 + 32 + 4 + 4).*
 
 ### Peculiaridades del diseño:
-*   **Promedio con decimales simulados:** En ensamblador, manejar números de punto flotante es complejo. El programa guarda el promedio multiplicado por 100 (ej: `8.75` se guarda como el entero `875`). Al imprimir, separa la parte entera de la decimal mediante una división entre 100.
-*   **Borrado Lógico:** No se elimina información físicamente del archivo. Cuando se "elimina" un estudiante, simplemente se cambia la bandera `activo` de `1` a `0`.
+*   **Lectura Secuencial:** El archivo se lee desde el inicio bloque a bloque utilizando la macro `fread` de la librería de MASM32.
+*   **Borrado Físico con Archivo Temporal:** Cuando se elimina un alumno, no se usa borrado lógico. El programa crea un archivo temporal (`temp.dat`), lee todos los registros de `alumnos.dat` y escribe en el temporal solo los que **no** coinciden con el ID a eliminar. Luego borra el archivo original y renombra el temporal usando la API `MoveFile`.
 
 ---
 
 ## 3. Funcionamiento de los Módulos (El CRUD)
 
-### A. Inicialización (`InicializarArchivo`)
-Se encarga de verificar si el archivo `estudiantes.bin` existe abriéndolo (`fopen`). Si falla (retorna 0), lo crea (`fcreate`). También utiliza la función `fsize` para medir el tamaño total del archivo, el cual divide entre `TAM_EST` (tamaño de la estructura) para saber exactamente **cuántos registros existen** en el disco.
+### A. Agregar (Create)
+1. Intenta abrir el archivo `alumnos.dat` con `fopen`. Si falla (retorna -1 o 0), lo crea con `fcreate`.
+2. Se posiciona al final del archivo usando `fseek(hFile, 0, FILE_END)`.
+3. Pide los datos al usuario mediante `invoke StdIn`.
+4. Convierte las cadenas numéricas (como el ID o la edad) a valores enteros de 32 bits usando `invoke atodw`.
+5. Escribe la estructura completa en el disco con la macro `fwrite` pasando como parámetro `sizeof Alumno`.
 
-### B. Agregar (Create)
-1. Pide los datos al usuario usando la macro `input`.
-2. Verifica mediante `BuscarPorMatricula` que la matrícula no exista ya (para evitar duplicados).
-3. Convierte las cadenas ingresadas a enteros donde corresponde (`atodw`).
-4. Se posiciona al final del archivo usando `fseek(hFile, 0, FILE_END)`.
-5. Escribe los 108 bytes de la estructura en disco con la API de Windows `WriteFile`.
+### B. Listar Todos (Read)
+1. Abre el archivo en modo lectura.
+2. Imprime un separador e inicia un ciclo (`.while 1`).
+3. Lee bloque por bloque (`fread`) usando el tamaño de la estructura `Alumno`. Si la lectura devuelve 0, el ciclo termina (`.break`).
+4. Imprime en pantalla cada campo del alumno (convirtiendo los números de vuelta a texto con la macro `str$`).
 
-### C. Listar y Buscar (Read)
-Recorre el archivo calculando un ciclo desde `i = 0` hasta `totalEst` (total de estudiantes).
-*   Se posiciona multiplicando `i * TAM_EST` y usando `fseek` desde el inicio (`FILE_BEGIN`).
-*   Lee el bloque con `ReadFile`.
-*   **Solo** muestra en pantalla aquellos cuya propiedad `activo` es igual a `1`.
+### C. Buscar por ID (Read)
+1. Pide al usuario el ID a buscar y lo guarda en `targetId`.
+2. Abre el archivo e inicia un ciclo secuencial igual que al listar.
+3. Compara el `id` del bloque recién leído con `targetId`.
+4. Si coincide, imprime los datos y rompe el ciclo prematuramente (`.break`).
+5. Se apoya de una variable bandera (`found`) para saber si al final debe mostrar un mensaje de "no encontrado".
 
-### D. Actualizar (Update)
-1. Busca la matrícula solicitada.
-2. Si la encuentra, captura el índice exacto (`idx`) donde está guardada.
-3. Pide los nuevos datos al usuario y los sobreescribe en memoria.
-4. Se posiciona en exactamente el mismo byte del archivo original (`idx * TAM_EST`) y utiliza `WriteFile` para "aplastar" (sobreescribir) el registro viejo con el nuevo.
+### D. Eliminar por ID (Delete)
+Aplica la técnica de **filtro por archivo temporal**.
+1. Pide el ID a eliminar.
+2. Abre `alumnos.dat` para lectura y crea `temp.dat` para escritura.
+3. Lee registro por registro de `alumnos.dat`.
+4. Si el ID **no es** el que se quiere borrar, escribe ese registro en `temp.dat`.
+5. Si el ID **es** el buscado, activa la bandera `found` en 1 y no lo escribe en `temp.dat` (lo omite).
+6. Cierra ambos archivos.
+7. Elimina `alumnos.dat` original con `fdelete`.
+8. Usa `invoke MoveFile` para renombrar `temp.dat` como `alumnos.dat`.
 
-### E. Eliminar (Delete)
-Aplica la técnica de **borrado lógico**.
-En lugar de borrar el registro del archivo físico, busca el registro, cambia el campo `activo` de la estructura a `0`, y vuelve a guardar la estructura entera en su posición original del archivo.
+### E. Borrar Todo
+Utiliza la macro `rv(exist, ...)` para verificar la existencia del archivo y la macro `fdelete` para eliminar directamente el archivo completo del disco de un solo paso.
 
 ---
 
@@ -66,23 +74,44 @@ En lugar de borrar el registro del archivo físico, busca el registro, cambia el
 
 Aquí tienes una lista de posibles preguntas que un profesor te haría durante la defensa del proyecto, junto con sus respuestas ideales.
 
-### ❓ P1. ¿Por qué el archivo de datos es un `.bin` y no un `.txt` normal?
-**Respuesta sugerida:** "Usamos un archivo binario porque nos permite hacer lecturas y escrituras secuenciales o directas usando una estructura de memoria (`STRUCT`) de tamaño fijo (108 bytes). En un TXT tendríamos que lidiar con saltos de línea y longitud variable de cadenas, mientras que en binario puedo usar `fseek` para saltar exactamente al byte donde empieza el registro número X, haciéndolo mucho más eficiente."
+### ❓ P1. ¿Por qué el archivo de datos es un `.dat` y no un `.txt` normal?
+**Respuesta sugerida:** "Usamos un enfoque que permite hacer escrituras directas del bloque de memoria (`STRUCT`) de 76 bytes en binario. En un TXT tendríamos que lidiar con saltos de línea, conversión de caracteres y longitudes variables para cada campo numérico, mientras que así usamos macros como `fwrite` para volcar directamente la estructura entera desde RAM al disco duro en una sola operación."
 
-### ❓ P2. Veo que manejas promedios, pero trabajas con `DWORD` (enteros). ¿Cómo muestras los decimales?
-**Respuesta sugerida:** "Para evitar la complejidad del coprocesador matemático (FPU) y los tipos flotantes en ensamblador, multiplico el promedio por 100 antes de guardarlo. Por ejemplo, si el estudiante tiene 8.50, lo guardo como el entero 850. Al momento de imprimir en pantalla, divido ese número entre 100 (`DIV ecx`). El cociente (`EAX`) me da la parte entera (8) y el residuo (`EDX`) me da los decimales (50), y los imprimo separados por un punto."
+### ❓ P2. ¿Cómo solucionaste la eliminación de registros de un archivo?
+**Respuesta sugerida:** "Utilicé una técnica de filtro mediante un archivo temporal. Al seleccionar Eliminar, el programa abre el archivo maestro en modo lectura y crea un nuevo archivo temporal. Va leyendo registro por registro, y solamente escribe en el temporal aquellos cuyo ID no coincide con el que queremos eliminar. Finalmente, se borra el archivo viejo y se renombra el temporal con el nombre original usando la API de Windows `MoveFile`."
 
-### ❓ P3. ¿Qué pasa cuando eliminas a un estudiante? ¿El archivo pesa menos?
-**Respuesta sugerida:** "No, el tamaño del archivo no cambia. Utilicé una técnica llamada **Borrado Lógico**. La estructura de datos tiene una bandera llamada `activo`. Cuando elimino un estudiante, simplemente busco su posición en el archivo y cambio su variable `activo` de 1 a 0. Las funciones de Listar y Buscar están programadas para ignorar cualquier registro donde `activo == 0`."
+### ❓ P3. ¿Cómo lees o navegas por los registros?
+**Respuesta sugerida:** "Las lecturas se hacen de forma secuencial. Por ejemplo, al Listar o Buscar, implementé un ciclo (`.while 1`) en el que la macro `fread` lee exactamente el tamaño de mi estructura (`sizeof Alumno`). Cada lectura avanza el puntero interno del archivo automáticamente. Si busco algo específico, simplemente comparo el `id` cargado en memoria en cada pasada."
 
-### ❓ P4. ¿Cómo sabes exactamente a qué parte del archivo saltar para leer o sobreescribir un registro?
-**Respuesta sugerida:** "Matemática de punteros básica. Como cada registro mide lo mismo (`TAM_EST` = 108 bytes), utilizo una multiplicación: el índice del registro multiplicado por el tamaño de la estructura. Ese resultado se lo paso a la función `fseek` junto con el parámetro `FILE_BEGIN`. Por ejemplo, para modificar el estudiante en el índice 3, me muevo al byte 324 (3 * 108)."
+### ❓ P4. ¿Qué librerías o macros utilizaste?
+**Respuesta sugerida:** "Utilizo principalmente la librería estándar `masm32rt.inc` del SDK de MASM32, la cual me proporciona funciones de alto nivel. Para la consola utilizo `StdIn` y la macro `print`. Para convertir números empleo `atodw` y `str$`. Para el manejo de archivos empleo las macros `fopen`, `fread`, `fwrite`, `fdelete` y `fseek`. Además de la API estándar de Win32 `MoveFile` que llamo con `invoke`."
 
-### ❓ P5. ¿Qué librerías o APIs utilizaste?
-**Respuesta sugerida:** "Utilizo principalmente la librería estandar `masm32rt.inc` del SDK de MASM32, la cual me proporciona macros de alto nivel como `print`, `input` (para consolas), e `invoke` (para llamar funciones). Para la manipulación del sistema de archivos utilicé internamente macros del SDK como `fopen`, `fseek` y directamente APIs de Win32 como `ReadFile` y `WriteFile`."
-
-### ❓ P6. ¿Para qué sirve `invoke atodw` en tu código?
-**Respuesta sugerida:** "La macro `input` lee lo que el usuario teclea como texto (caracteres ASCII). Sin embargo, para campos numéricos como la matrícula o la selección del menú, necesito el número real. `atodw` (ASCII to Double Word) convierte esa cadena de texto en un valor numérico entero que se guarda en el registro `EAX` para poder operar con él."
+### ❓ P5. ¿Para qué sirve `invoke atodw` en tu código?
+**Respuesta sugerida:** "La función `StdIn` lee lo que el usuario teclea como texto (caracteres ASCII). Sin embargo, para campos numéricos como el ID, la edad, o la calificación, necesito trabajar con el valor numérico de 32 bits real. `atodw` (ASCII to Double Word) convierte esa cadena de texto en un número entero que retorna en el registro `EAX`, el cual luego almaceno en la propiedad correspondiente de la estructura."
 
 ---
-*¡Mucho éxito en tu evaluación! Estudia bien cómo el tamaño del registro determina el funcionamiento de la memoria (fseek) y el concepto del guardado binario, ya que son los puntos más fuertes a nivel técnico.*
+*¡Mucho éxito en tu evaluación! Estudia bien el flujo del guardado de bloques y especialmente el algoritmo de eliminación con archivo temporal, ya que son los puntos más críticos y diferentes a las bases de datos relacionales tradicionales.*
+## 5. Conceptos Clave de Ensamblador (MASM32)
+
+Para entender completamente cómo funciona el código a bajo nivel y poder explicarlo con seguridad, es importante tener claros los siguientes conceptos de lenguaje ensamblador presentes en el programa:
+
+### Registros del Procesador (`EAX`, `EDX`)
+Los registros son pequeñas y rapidísimas zonas de memoria dentro del propio procesador. 
+*   **EAX (Acumulador):** Es el más importante en este código. Por convención en Win32, casi todas las funciones y macros (como `atodw`, `fopen`, `fread`) devuelven su resultado dejándolo en `EAX`. Por eso verás constantemente líneas como `mov hFile, eax` o `mov targetId, eax` justo después de llamar a una función para guardar su resultado.
+*   **EDX:** Se utiliza como un registro de propósito general. En la función de búsqueda de este código se usa como una "bandera" (flag) temporal (`mov edx, 1`) para saber si el ID actual coincide con el buscado o no.
+
+### Punteros y Direcciones de Memoria (`addr`)
+En ensamblador no puedes simplemente pasar variables complejas (como arreglos de texto o estructuras enteras) a las funciones directamente. Tienes que pasar la **dirección de memoria** donde comienzan a existir. 
+La directiva `addr` (Address) hace exactamente eso. Cuando ves `invoke StdIn, addr buffer, 64`, le estás diciendo a la función: *"Aquí está la dirección de memoria donde empieza mi variable buffer, escribe ahí los próximos 64 bytes que teclee el usuario"*.
+
+### Tipos de Datos: `DWORD`, `db` y `dup(?)`
+*   **DWORD (Double Word):** Representa un valor de 32 bits (4 bytes). Se usa para números enteros (como `id`, `edad`, `calificacion`) y también para guardar los "manejadores" de archivos (handles) que Windows nos da, como `hFile`.
+*   **db (Define Byte):** Reserva 1 byte de memoria (8 bits). En el programa se utiliza en conjunto con arreglos para formar cadenas de texto (ej. `nombre db 32 dup(?)`).
+*   **dup(?):** Significa "Duplicar". La instrucción `32 dup(?)` reserva 32 espacios (en este caso bytes, por el `db`) sin inicializar (eso significa el `?`). Es el equivalente exacto a declarar un array de caracteres vacío en C (`char nombre[32];`).
+
+### Directivas de Control de Flujo (`.if`, `.elseif`, `.while`)
+El lenguaje ensamblador puro utiliza etiquetas y saltos condicionales (`cmp`, `jmp`, `je`, `jne`) que hacen que el código sea difícil de leer (código espagueti). Sin embargo, MASM32 proporciona "directivas de alto nivel" como `.if`, `.elseif` y `.while` / `.endw`. Estas directivas son traducidas automáticamente por el compilador (`ml.exe`) a los saltos nativos del procesador, permitiéndote programar casi como si estuvieras en C o C++.
+
+### Llamadas a Funciones (`invoke` vs Macros)
+*   **invoke:** Es una directiva de MASM que facilita enormemente llamar a funciones de la API de Windows (como `MoveFile`, `StdIn` o `ExitProcess`). Tras bambalinas, se encarga de "empujar" (hacer `PUSH`) de los parámetros a la pila de memoria (stack) en el orden correcto antes de ejecutar la llamada (`CALL`).
+*   **Macros (como `print`, `fopen`, `fwrite`):** Son fragmentos de código preescritos incluidos en la librería de MASM32 (`masm32rt.inc`). Al compilar, el ensamblador reemplaza la palabra de la macro por varias líneas de código real de ensamblador, haciendo que el código fuente quede mucho más limpio y legible.
